@@ -1,24 +1,10 @@
 #!/usr/bin/env python
 
-from mcpi.minecraft import Minecraft
-from mcpi.block import * # Block and all constant block definitions
-from mcpi.vec3 import Vec3
-
-import server
-import math
-import text # from mcpipy scripts distribution
-from sign import Sign
-from menu import Menu, BlockChooser
-from collections import OrderedDict
-import time
-default_delay = 0.1 # don't hog cpu
-import threading
-Lock = threading.Lock
-
-LEGO_WIDTH = 3
-LEGO_HEIGHT = 3
-
 from click_handler import *
+from menu import Menu
+from lego_grid import LegoGrid
+from collections import OrderedDict
+
 
 def angleToBrickDirection(angle):
    # print angle
@@ -33,35 +19,13 @@ def angleToBrickDirection(angle):
    elif direction == 3:
       return Vec3(0, 0, 1)
 
-class LegoGrid():
-   def __init__(self,
-                origin,
-                brick_width = LEGO_WIDTH,
-                brick_height = LEGO_HEIGHT,
-                mc = None,
-               ):
-      # if origin is None:
-      #    origin = Menu.BlockChooser().get_hit_position()
-      # # end if
-      self.origin = origin.clone()
-      self.brick_width = brick_width
-      self.brick_height = brick_height
-      self.plate_height = max(1, int(self.brick_height/3))
-      print "Lego Grid Created at origin %d,%d,%d"%(self.origin.x,
-                                                    self.origin.y,
-                                                    self.origin.z,
-                                                    )
-   def align_to_grid(self, position):
-      print "align_to_grid not implemented"
-      return position
-
-class LegoBrick(threading.Thread):
+class LegoBrick():
    def __init__(self,
                 position,
                 length=1,
                 width=1,
                 rounded_corners=False,
-                height=LEGO_HEIGHT,  # brick vs plate
+                height=3,  # brick (3) vs plate (1)
                 block=None,
                 grid=None,
                 up_vec = None,
@@ -72,7 +36,6 @@ class LegoBrick(threading.Thread):
                ):
       '''
       '''
-      threading.Thread.__init__(self)
       self.mc = mc
       self.origin = position.clone() # TODO: check against a LegoGrid
       self.active_blocks = set() # used to activate control menu
@@ -106,8 +69,6 @@ class LegoBrick(threading.Thread):
       self.menu = None
 
       self.draw()
-      self.daemon
-      self.start()
    # end def __init__
 
    def setMenu(self, new_menu):
@@ -126,12 +87,12 @@ class LegoBrick(threading.Thread):
    def pop_menu(self, hitBlock):
       self.setMenu( Menu(choices = OrderedDict([
                ('move' ,   {'name': 'Move Brick',      'callback': self.ask_position            }),
+               ('rotate' , {'name': 'Rotate Brick',    'callback': self.ask_direction           }),
+               ('block',   {'name': 'Change Material', 'callback': self.ask_block               }),
                ('length',  {'name': 'Change Length',   'callback': self.ask_dim('length')       }),
                ('width',   {'name': 'Change Width',    'callback': self.ask_dim('width')        }),
                ('height',  {'name': 'Change Height',   'callback': self.ask_dim('height',[1,3]) }),
                # ('corners', {'name': 'Toggle Corners',  'callback': self._not_impl_menu          }),
-               ('block',   {'name': 'Change Material', 'callback': self.ask_block               }),
-               ('rotate' , {'name': 'Rotate Brick',    'callback': self.ask_direction           }),
                ('delete' , {'name': 'Delete Brick',    'callback': self.ask_destroy             }),
                ('cancel' , {'name': 'Cancel',          'callback': self.cancel_menu             }),
             ]),
@@ -145,6 +106,7 @@ class LegoBrick(threading.Thread):
    def ask_destroy(self, value, hitBlock):
       self.destroy()
       self.setMenu(None)
+      print "Brick destroyed"
 
    def ask_position(self, value, hitBlock):
       self.setMenu(None)
@@ -165,8 +127,9 @@ class LegoBrick(threading.Thread):
 
       @BlockHandlerDecorator(self.mc)
       def get_block(pb):
-         if pb.block in BASIC_BLOCKS:
-            self.block = pb.block
+         # if pb.block in BASIC_BLOCKS:
+         self.block = pb.block
+         print "Set block to %s"%(str(tuple(self.block)))
          self.draw()
 
       self.mc.postToChat("Choose a block type to use")
@@ -180,6 +143,7 @@ class LegoBrick(threading.Thread):
 
       def set_rotation(hitBlock):
          self.length_vec = angleToBrickDirection(self.mc.player.getRotation())
+         print "Brick aligned with %s"%(str(tuple(self.length_vec)))
          self.draw()
 
       self.mc.postToChat("Face a new direction and hit something")

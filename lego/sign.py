@@ -1,6 +1,6 @@
 from mcpi.block import * # Block and all constant block definitions
-import time
 from mcpi.vec3 import Vec3
+import time
 
 class Sign():
    def __init__(self,
@@ -13,10 +13,18 @@ class Sign():
       self.position = Vec3(*[int(x) for x in tuple(position)])
       self.rotation = rotation
       self.face_player()
+      try:
+         self.original_block = mc.getBlockWithData(self.position)
+      except:
+         self.original_block = AIR
+      self.deleted = False
+
       self.update(message)
 
    def destroy(self):
-      self.mc.setBlock(self.position, AIR)
+      self.deleted = True
+      self.mc.setBlock(Vec3(*tuple(self.position)),
+                       Block(*tuple(self.original_block)))
 
    def rotate(self, rotation = 'CW'):
       if rotation == 'CCW':
@@ -33,8 +41,13 @@ class Sign():
       self.update()
 
    def face_player(self):
-      x = 360/16
-      self.rotation = int(round((self.mc.player.getRotation() + 180) % 360) / x)
+      try:
+         r = self.mc.player.getRotation()
+         x = 360/16
+         self.rotation = int(round((r + 180) % 360) / x)
+      except ValueError:
+         pass
+      # end try
 
    def spin_once(self):
       for i in range(16):
@@ -42,32 +55,37 @@ class Sign():
          time.sleep(0.02)
 
    def update(self, message = None):
-      self.rotation = self.rotation % 16 # keep in bounds
-      message_changed = False
-      if message is not None:
-         self.message = message
-         message_changed = True
-      # end if
+      if not self.deleted:
+         self.rotation = self.rotation % 16 # keep in bounds
+         message_changed = False
+         if message is not None:
+            self.message = message
+            message_changed = True
+         # end if
 
-      extra_data = "{id:\"Sign\""
-      lines = self.message.splitlines()
-      for i in range(min(4,len(lines))):
-         line = lines[i]
-         # print line
-         extra_data += ",Text%d:\"%s\"" % (i+1, line)
-      # end for
-      extra_data += "}"
+         extra_data = "{id:\"Sign\""
+         lines = self.message.splitlines()
 
-      if message_changed:
-         r = self.rotation
-         self.rotate() # stimulate a redraw
-         self.rotation = r
-      # end if
-      self.mc.conn.send("world.setBlock",
-                        self.position.x, self.position.y, self.position.z,
-                        63, self.rotation,
-                        extra_data
-                       )
+         # top of signs is hidden often, shift down if we have the room
+         if len(lines) < 4: lines.insert(0,'')
+
+         for i in range(min(4,len(lines))):
+            line = lines[i]
+            # print line
+            extra_data += ",Text%d:\"%s\"" % (i+1, line)
+         # end for
+         extra_data += "}"
+
+         if message_changed:
+            r = self.rotation
+            self.rotate() # stimulate a redraw
+            self.rotation = r
+         # end if
+         self.mc.conn.send("world.setBlock",
+                           self.position.x, self.position.y, self.position.z,
+                           63, self.rotation,
+                           extra_data
+                          )
 
 if __name__ == '__main__':
    from mc import *

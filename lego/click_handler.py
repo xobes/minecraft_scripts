@@ -112,7 +112,13 @@ class ClickHandler():
          pass
 
    def Parse_Clicks(self):
-      for hitBlock in self.mc.events.pollBlockHits():
+      try:
+         events = self.mc.events.pollBlockHits()
+      except ValueError:
+         #     [BlockEvent.Hit(*map(int, e.split(","))) for e in events]
+         # ValueError: invalid literal for int() with base 10: '-18.48820747285734'
+         events = []
+      for hitBlock in events:
          position = hitBlock.pos
          h = self._hash(position)
          handled = False

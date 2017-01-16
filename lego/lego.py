@@ -1,20 +1,10 @@
 #!/usr/bin/env python
 
-from mcpi.minecraft import Minecraft
-from mcpi.block import * # Block and all constant block definitions
-from mcpi.vec3 import Vec3
-
-import server
-import math
-import text # from mcpipy scripts distribution
-from sign import Sign
-from menu import Menu, BlockChooser
-from lego_brick import LegoBrick, LegoGrid, angleToBrickDirection
-from collections import OrderedDict
-import time
-from threading import Lock
-
 from click_handler import *
+import json
+import threading
+from lego_grid import LegoGrid
+from lego_brick import LegoBrick, angleToBrickDirection
 
 mqtt_broker = '192.168.1.33'
 
@@ -55,15 +45,49 @@ if mqtt:
          # manual interface.
          self.client.loop_stop()
 
-class Game():
+
+def grid_to_dict(grid):
+   d = {
+      'brick_width' : getattr(grid,'brick_width', 3),
+      'brick_height' : getattr(grid,'brick_height', 3),
+      # 'plate_height' : getattr(grid,'plate_height', 1),
+      'origin' : tuple(getattr(grid,'origin', (0,0,0))),
+      }
+   return d
+
+def brick_to_dict(brick):
+   deleted = getattr(brick, 'deleted', False)
+   if not deleted:
+      d = {
+         # 'my_blocks' : [tuple(v) for v in getattr(brick,'my_blocks', [])],
+         # 'active_blocks' : [tuple(v) for v in getattr(brick,'active_blocks', [])],
+         'length' : getattr(brick,'length', 1),
+         'width' : getattr(brick,'width', 1),
+         'height' : getattr(brick,'height', 1),
+         'block' : tuple(getattr(brick,'block', (1,0))),
+         'length_vec' : tuple(getattr(brick,'length_vec', (1,0,0))),
+         'up_vec' : tuple(getattr(brick,'up_vec', (0,1,0))),
+         'origin' : tuple(getattr(brick,'origin', (0,0,0))),
+         }
+      return d
+
+def game_to_dict(game):
+   d = {
+      'grid' : grid_to_dict(game.my_grid),
+      'bricks': [brick_to_dict(b) for b in list(game.my_bricks)]
+   }
+   return d
+
+class Game(threading.Thread):
    def __init__(self,
                 quit_block = TNT,
+                load_from_file = None,
                 mc = None):
+      threading.Thread.__init__(self)
+      self.daemon = True
+
       self.mc = mc
       self.quit_block = quit_block
-      self.my_bricks = set()
-      self.my_grid = None
-      self.my_lock = Lock()
       self.last_brick = None
 
       self.done = False
@@ -71,7 +95,47 @@ class Game():
 
       self.myClickHandler = ClickHandler(mc = mc)
 
+      self.my_bricks = []
+      self.my_grid = None
+
+      self.next_brick = {
+         'length': 1,
+         'width' : 1,
+         'height': 3, # brick not plate
+         'block' : Block(1,0), # stone
+      }
+      self.active_brick = None
+
+      if load_from_file:
+         self.load(load_from_file)
+
       self.my_mqtt_client = None
+      self._init_mqtt()
+
+   def load(self, input_file):
+      with open(input_file, 'r') as fp:
+         o = json.load(fp)
+         grid = o['grid']
+         self.my_grid = LegoGrid(origin =       Vec3(*grid['origin']),
+                                 brick_width =  int(grid['brick_width']),
+                                 brick_height = int(grid['brick_height']),
+                                )
+         for b in o['bricks']:
+            if b is not None:
+               self.add_brick(pos =                 Vec3(*b['origin']),
+                              length =              int(b['length']),
+                              width =               int(b['width']),
+                              height =              int(b['height']),
+                              block =               Block(*b['block']),
+                              length_vec =          Vec3(*b['length_vec']),
+                              up_vec =              Vec3(*b['up_vec']),
+                             )
+
+   def save(self, output_file):
+      with open(output_file, 'w') as fp:
+         json.dump(game_to_dict(self), fp)
+
+   def _init_mqtt(self):
       if mqtt:
 
          # The callback for when the client receives a CONNACK response from the server.
@@ -135,11 +199,8 @@ class Game():
                                           on_message=on_message)
       # end if // else there will be no mqtt sync
 
-   def remove_brick(self,brick):
-      self.my_bricks.discard(brick)
-
    def set_active_brick(self, brick):
-      print "set_active_brick not implemented"
+      self.active_brick = brick
       # for brick in self.my_bricks:
       #    if position in brick.active_blocks:
       #       self.last_brick = brick
@@ -149,71 +210,78 @@ class Game():
       #       # end if
       # # end if
 
+   def add_brick(self, pos, length, width, height, block,
+                 length_vec = None,
+                 up_vec = None,
+                ):
+      brick = LegoBrick(pos,
+                        block  = Block(*tuple(block)),
+                        length = length,
+                        width  = width,
+                        height = height,
+                        length_vec = length_vec,
+                        up_vec     = up_vec,
+                        mc=self.mc,
+                        grid=self.my_grid,
+                        click_handler=self.myClickHandler,
+                        on_destroy=self.remove_brick,
+                        )
+
+      self.set_active_brick(brick)
+      self.my_bricks.append(brick)
+
+   def remove_brick(self, brick):
+      try:
+         self.my_bricks.remove(brick)
+      except:
+         pass
+
    def click_to_quit_or_place_new(self, hitBlock):
       pb = PosBlock(hitBlock.pos, mc = self.mc)
       if pb.block == self.quit_block:
          self.done = True
-      elif (pb.block in BASIC_BLOCKS): # pass the buck
+      else:
          self.mc.postToChat("%s"%(pb.block))
 
          if self.my_grid is None:
             self.my_grid = LegoGrid(pb.pos)
          # end if
 
-         kwargs = {}
-         if self.last_brick:
-            kwargs.update({
-               'block': self.last_brick.block,
-               'length': min(8,self.last_brick.length),
-               'width':  min(2, self.last_brick.width),
-               'height':  self.last_brick.height,
-            })
-         else:
-            kwargs.update({
-               'block': pb.block,
-            })
-         # end if
-         kwargs.update(dict(
-            mc=self.mc,
-            grid=self.my_grid,
-            click_handler = self.myClickHandler,
-            on_destroy=self.remove_brick,
-         ))
+         self.add_brick(pos =    pb.pos,
+                        length = self.next_brick['length'],
+                        width =  self.next_brick['width'],
+                        height = self.next_brick['height'],
+                        block =  Block(*tuple(self.next_brick['block'])),
+                       )
 
-         # print kwargs
-
-         brick = LegoBrick(pb.pos,
-                           **kwargs
-                           )
-
-         self.last_brick = brick
-         self.my_bricks.add(brick)
-      else:
-         self.mc.postToChat("Ignored %s" % (pb.block))
       # end if
    # end if
 
+   def redraw_all(self):
+      for b in self.my_bricks:
+         b.redraw()
+
    def run(self):
-      # Cannot do this here!  myClickHandler uses the mainloop below...
-      #########################################################
-      def Wait_For_Hit(mc):
-         def Make_Hit_Waiter():
-            Waiter = {}
-            def Call_On_Hit(Hit):
-               Waiter['hit'] = Hit
-            return Waiter, Call_On_Hit
-         w, c = Make_Hit_Waiter()
-         self.myClickHandler.Register_Default_Handler(c)
-         while not w.has_key('hit'):
-            time.sleep(0.05)
-            self.myClickHandler.Parse_Clicks()
-         self.myClickHandler.Reset_Default_Handler()
-         return w['hit']
-      # end def Wait_For_Hit
-      self.mc.postToChat("testing Wait_For_Hit")
-      pos_block = Wait_For_Hit(self.mc)
-      print "hit detected", pos_block
-      #########################################################
+      # #########################################################
+      # def Wait_For_Hit(mc):
+      #    def Make_Hit_Waiter():
+      #       Waiter = {}
+      #       def Call_On_Hit(Hit):
+      #          Waiter['hit'] = Hit
+      #       return Waiter, Call_On_Hit
+      #    w, c = Make_Hit_Waiter()
+      #    self.myClickHandler.Register_Default_Handler(c)
+      #    while not w.has_key('hit'):
+      #       time.sleep(0.05)
+      #       self.myClickHandler.Parse_Clicks()
+      #    self.myClickHandler.Reset_Default_Handler()
+      #    return w['hit']
+      # # end def Wait_For_Hit
+      # self.mc.postToChat("testing Wait_For_Hit")
+      # pos_block = Wait_For_Hit(self.mc)
+      # print "hit detected", pos_block
+      # #########################################################
+      # TODO: setup workbench for special menu activation...
 
       self.mc.postToChat("Pick TNT to quit, any other block to make LEGO bricks")
       self.myClickHandler.Register_Default_Handler(self.click_to_quit_or_place_new)
@@ -232,4 +300,8 @@ class Game():
    # end def // run
 # end class
 
-print "lego"
+
+r'''
+with open(r'c:\temp\paris.json','w') as fp: json.dump(game_to_dict(test.g), fp)
+with open(r'c:\temp\paris.json','r') as fp: o = json.load(fp); print o
+'''
