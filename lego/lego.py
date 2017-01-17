@@ -98,7 +98,7 @@ class Game(threading.Thread):
                               width =               int(b['width']),
                               height =              int(b['height']),
                               block =               Block(*b['block']),
-                              has_studs =           int(*b.get('has_studs',1)),
+                              has_studs =           int(b.get('has_studs',1)),
                               length_vec =          Vec3(*b['length_vec']),
                               up_vec =              Vec3(*b['up_vec']),
                              )
@@ -174,8 +174,13 @@ class Game(threading.Thread):
                   print "received data for %s and ignored it"%(k)
                # end try
             elif parts[3] == 'command':
-               if parts[4] == 'redraw':
+               c = parts[4]
+               if c == 'redraw':
                   self.redraw_all()
+               elif c == 'save':
+                  self.save(r'C:\temp\%s'%(str(msg.payload)) )
+               elif c == 'load':
+                  self.load(r'C:\temp\%s'%(str(msg.payload)))
                # end if
             # end if
          # end def
