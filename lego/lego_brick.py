@@ -25,7 +25,10 @@ class LegoBrick():
                 length=1,
                 width=1,
                 rounded_corners=False,
+                has_studs = True,
                 height=3,  # brick (3) vs plate (1)
+                shape = None,
+                shape_studs = None,
                 block=None,
                 grid=None,
                 up_vec = None,
@@ -45,6 +48,13 @@ class LegoBrick():
       self.width = width
       self.height = height
       self.deleted = False
+
+      self.radius = 0 # rounded_corners should be radius... 1x round vs 2x round, etc.
+      self.has_studs = has_studs
+      self.old_shape = set()
+      self.shape = set()
+      self.shape_studs = set()
+      self.has_custom_shape = False
 
       if grid is None:
          grid = LegoGrid(position)
@@ -68,6 +78,13 @@ class LegoBrick():
 
       self.menu = None
 
+      if shape is None and shape_studs is None:
+         self.rebuild_shape()
+      else:
+         # reconstitute a saved shape
+         self.has_custom_shape = 1
+         self.shape = set([Vec3(*x) for x in shape])
+         self.shape_studs = set([Vec3(*x) for x in shape_studs])
       self.draw()
    # end def __init__
 
@@ -84,18 +101,30 @@ class LegoBrick():
    def cancel_menu(self, *args):
       self.setMenu(None)
 
+   def toggle_studs(self, *args):
+      self.has_studs = not self.has_studs
+      self.rebuild_shape()
+      self.draw()
+
    def pop_menu(self, hitBlock):
-      self.setMenu( Menu(choices = OrderedDict([
-               ('move' ,   {'name': 'Move Brick',      'callback': self.ask_position            }),
-               ('rotate' , {'name': 'Rotate Brick',    'callback': self.ask_direction           }),
-               ('block',   {'name': 'Change Material', 'callback': self.ask_block               }),
-               ('length',  {'name': 'Change Length',   'callback': self.ask_dim('length')       }),
-               ('width',   {'name': 'Change Width',    'callback': self.ask_dim('width')        }),
-               ('height',  {'name': 'Change Height',   'callback': self.ask_dim('height',[1,3]) }),
-               # ('corners', {'name': 'Toggle Corners',  'callback': self._not_impl_menu          }),
-               ('delete' , {'name': 'Delete Brick',    'callback': self.ask_destroy             }),
-               ('cancel' , {'name': 'Cancel',          'callback': self.cancel_menu             }),
-            ]),
+      choices = OrderedDict([
+         ('move' ,   {'name': 'Move Brick',      'callback': self.ask_position            }),
+         ('rotate' , {'name': 'Rotate Brick',    'callback': self.ask_direction           }),
+         ('block',   {'name': 'Change Material', 'callback': self.ask_block               }),
+         ('length',  {'name': 'Change Length',   'callback': self.ask_dim('length')       }),
+         ('width',   {'name': 'Change Width',    'callback': self.ask_dim('width')        }),
+         ('height',  {'name': 'Change Height',   'callback': self.ask_dim('height',[1,3]) }),
+         ('studs',   {'name': 'Toggle Studs',    'callback': self.toggle_studs            }),
+         ('delete' , {'name': 'Delete Brick',    'callback': self.ask_destroy             }),
+         ('cancel' , {'name': 'Cancel',          'callback': self.cancel_menu             }),
+      ])
+      if self.has_custom_shape:
+         # TODO: perhaps a shape edit menu (edit shape) is warranted?
+         for key in ['length','width','height','studs']:
+            choices[key]['name'] += '\nDISABLED\nCustom Shape'
+            choices[key]['callback'] = self.cancel_menu
+      # end if
+      self.setMenu( Menu(choices = choices,
             title = 'Brick Menu - Choose what to change',
             pos = hitBlock.pos,
             mc = self.mc,
@@ -103,12 +132,12 @@ class LegoBrick():
          ))
    # end def
 
-   def ask_destroy(self, value, hitBlock):
+   def ask_destroy(self, *args):
       self.destroy()
       self.setMenu(None)
       print "Brick destroyed"
 
-   def ask_position(self, value, hitBlock):
+   def ask_position(self, *args):
       self.setMenu(None)
 
       @PositionHandlerDecorator
@@ -122,7 +151,7 @@ class LegoBrick():
       self.hide()
    # end def
 
-   def ask_block(self, value, hitBlock):
+   def ask_block(self, *args):
       self.setMenu(None)
 
       @BlockHandlerDecorator(self.mc)
@@ -138,7 +167,7 @@ class LegoBrick():
       self.hide()
    # end def
 
-   def ask_direction(self, value, hitBlock):
+   def ask_direction(self, *args):
       self.setMenu(None)
 
       def set_rotation(hitBlock):
@@ -154,13 +183,14 @@ class LegoBrick():
 
    def ask_dim(self, attr, opts=None):
       if opts is None:
-         opts=[1,2,4,6,8,10,12,16]
+         opts=[1,2,3,4,6,8,10,12,16]
       def selected_dim(value, hitBlock):
          self.setMenu(None)
          print "Select the new length"
          def set_dim(x):
             def inner(value, hitBlock):
                setattr(self, attr, x)
+               self.rebuild_shape()
                self.draw()
             return inner
          self.setMenu( Menu(choices=OrderedDict(
@@ -177,24 +207,24 @@ class LegoBrick():
       return selected_dim
    # end def
 
-   def draw(self):
+   def rebuild_shape(self):
       '''
-      we don't know what's different this time around, but we may have grown or shrunk
+      build the shape from length/width/height, etc. (reset to standard block)
       '''
       if self.deleted: return
-      current_geometry = [x for x in self.my_blocks]
-      self.my_blocks = set()
+      self.old_shape = set([x for x in self.shape]) # quick copy
+      self.shape = set()
+      self.shape_studs = set()
+      self.has_custom_shape = False # we just destroyed it
 
-      # self.origin
       block_length = self.length * self.grid.brick_width
       block_width = self.width * self.grid.brick_width
-      block_height = self.height * self.grid.brick_height/3 # TODO: use grid constant... self.height is not used...
-      # print block_length, block_width, block_height
+      block_height = self.height * self.grid.brick_height/3
 
       # a brick at origin has self.origin which is stud-aligned position
       # the extents of the block (seen from above):
       '''
-            X = oorigin
+            X = origin
 
             +----+    ---> length_vec
             |X  o|  w
@@ -206,23 +236,21 @@ class LegoBrick():
 
       '''
 
-      length_vec = self.length_vec
-      up_vec = self.up_vec
+      length_vec = Vec3(1,0,0)
+      up_vec = Vec3(0,1,0)
       width_vec = length_vec.cross(up_vec)
 
       half_block_width = int(self.grid.brick_width / 2)
-      p0 = self.origin + \
+      p0 = Vec3(0,0,0) + \
            (length_vec * -half_block_width) + \
            (width_vec * -half_block_width)
 
-      exclude_volume = set()
+      exclude_volume = set() # center void
       wall_thickness = 1
       for dl in range(wall_thickness,block_length-wall_thickness):
          for dw in range(wall_thickness,block_width-wall_thickness):
             for dh in range(block_height-wall_thickness):
-               pixel_pos = p0 + (length_vec * dl) + \
-                           (up_vec * dh) + \
-                           (width_vec * dw)
+               pixel_pos = p0 + Vec3(dl, dh, dw)
                exclude_volume.add(pixel_pos)
             # end for // h
          # end for // w
@@ -231,51 +259,77 @@ class LegoBrick():
       for dl in range(block_length):
          for dw in range(block_width):
             for dh in range(block_height):
-               pixel_pos = p0 + (length_vec * dl) + \
-                           (up_vec * dh) + \
-                           (width_vec * dw)
+               pixel_pos = p0 + Vec3(dl, dh, dw)
                if pixel_pos not in exclude_volume:
-                  self.my_blocks.add(pixel_pos)
-                  self._Register_Active_Block(pixel_pos)
+                  self.shape.add(pixel_pos)
                # end if
             # end for // h
          # end for // w
       # end for // l
 
       # draw studs
-      # stud_radius =
       stud_height = 1
-      s1= self.origin + \
-           (up_vec * block_height)
-      s0 = self.origin
-      for l in range(self.length):
+      s0 = Vec3(0,0,0)
+      s1 = s0 + up_vec * block_height # first stud
+      if not self.has_studs:
+         # adjust s1 to be one block lower, to fill the void on a plate
+         s1 = s1 + Vec3(0,-1,0)
+         stud_height = 1 # regardless of previous setting
+      # end if
+
+      for l in range(self.length): # num studs long
          dl = l * self.grid.brick_width
-         for w in range(self.width):
+         for w in range(self.width): # num studs wide
             dw = w * self.grid.brick_width
-            # add studs
-            for dh in range(stud_height):
-               pixel_pos = s1 + (length_vec * dl) + \
-                                (up_vec * dh) + \
-                                (width_vec * dw)
-               self.my_blocks.add(pixel_pos)
-            # end for // h
 
             dh = 0
-            # make bottom stud holes
-            pixel_pos = s0 + (length_vec * dl) + \
-                             (up_vec * dh) + \
-                             (width_vec * dw)
-            self.my_blocks.discard(pixel_pos)
+            # make bottom stud holes (required first in case of tiles)
+            pixel_pos = s0 + Vec3(dl, dh, dw)
+            self.shape.discard(pixel_pos)
+
+            # add studs to top (see above for special tile rule)
+            for dh in range(stud_height):
+               pixel_pos = s1 + Vec3(dl, dh, dw)
+               self.shape_studs.add(pixel_pos)
+            # end for // h
          # end for // w
       # end for // l
 
+   def draw(self):
+      '''
+      we don't know what's different this time around, but we may have grown or shrunk
+      '''
+      if self.deleted: return
+      current_geometry = [x for x in self.my_blocks]
+      self.my_blocks = set()
+
+      length_vec = self.length_vec
+      up_vec =     self.up_vec
+      width_vec =  length_vec.cross(up_vec)
+
+      p0 = self.origin
+      # for the non-studs (all of which are 'active' and will pop the menu -- owned by us)
+      for dl,dh,dw in self.shape:
+         pixel_pos = p0 + (length_vec * dl) + \
+                          (up_vec * dh) + \
+                          (width_vec * dw)
+         self.my_blocks.add(pixel_pos)
+         self._Register_Active_Block(pixel_pos)
+      # end for each pixel in our shape
+
+      # for the studs (which are not 'active' and instead are used to place blocks, owned by our parent)
+      for dl, dh, dw in self.shape_studs:
+         pixel_pos = p0 + (length_vec * dl) + \
+                          (up_vec * dh) + \
+                          (width_vec * dw)
+         self.my_blocks.add(pixel_pos)
+      # end for each stud pixel in our shape
+
       erase = set(current_geometry).difference(self.my_blocks)
       for e in erase:
-         # print 'erasing %s'%(e)
          self.mc.setBlock(e, AIR)
          self._Remove_Active_Block(e)
       for p in self.my_blocks:
-         # print 'drawing %s' % (p)
          self.mc.setBlock(p, self.block)
 
    def _Remove_Active_Block(self, vec):

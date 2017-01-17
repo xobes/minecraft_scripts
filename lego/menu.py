@@ -56,11 +56,12 @@ class Menu(threading.Thread):
 
    def run(self):
       while self.displayed:
-         for s in self.signs:
-            sign = self.signs[s]
-            sign.face_player()
-            sign.update()
-            if not self.displayed: break
+         # for s in self.signs:
+         #    if not self.displayed: break
+         #    sign = self.signs[s]
+         #    with sign.lock:
+         #       sign.face_player()
+         #       sign.update()
          time.sleep(0.1)
 
    def Register_Sign(self, key, s, cb):

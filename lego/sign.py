@@ -1,6 +1,7 @@
 from mcpi.block import * # Block and all constant block definitions
 from mcpi.vec3 import Vec3
 import time
+import threading
 
 class Sign():
    def __init__(self,
@@ -13,6 +14,7 @@ class Sign():
       self.position = Vec3(*[int(x) for x in tuple(position)])
       self.rotation = rotation
       self.face_player()
+      self.lock = threading.Lock()
       try:
          self.original_block = mc.getBlockWithData(self.position)
       except:
@@ -50,9 +52,10 @@ class Sign():
       # end try
 
    def spin_once(self):
-      for i in range(16):
-         self.rotate()
-         time.sleep(0.02)
+      with self.lock:
+         for i in range(16):
+            self.rotate()
+            time.sleep(0.02)
 
    def update(self, message = None):
       if not self.deleted:
