@@ -39,6 +39,11 @@ def brick_to_dict(brick):
          'up_vec' : tuple(getattr(brick,'up_vec', (0,1,0))),
          'origin' : tuple(getattr(brick,'origin', (0,0,0))),
          }
+      if brick.has_custom_shape:
+         d.update(dict(
+            shape = [tuple(x) for x  in getattr(brick,'shape',[])],
+            shape_studs = [tuple(x) for x  in getattr(brick,'shape_studs',[])],
+         ))
       return d
 
 def game_to_dict(game):
@@ -101,6 +106,8 @@ class Game(threading.Thread):
                               has_studs =           int(b.get('has_studs',1)),
                               length_vec =          Vec3(*b['length_vec']),
                               up_vec =              Vec3(*b['up_vec']),
+                              shape =               b.get('shape',None),
+                              shape_studs =         b.get('shape_studs', None),
                              )
 
    def save(self, output_file):

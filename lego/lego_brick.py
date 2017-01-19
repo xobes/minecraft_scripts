@@ -41,6 +41,7 @@ class LegoBrick():
       '''
       '''
       self.mc = mc
+      self.on_destroy = on_destroy
       self.origin = position.clone() # TODO: check against a LegoGrid
       self.active_blocks = set() # used to activate control menu
       self.my_blocks = set() # keep track of all our parts
@@ -52,7 +53,6 @@ class LegoBrick():
 
       self.radius = 0 # rounded_corners should be radius... 1x round vs 2x round, etc.
       self.has_studs = has_studs
-      self.old_shape = set()
       self.shape = set()
       self.shape_studs = set()
       self.has_custom_shape = False
@@ -80,7 +80,6 @@ class LegoBrick():
       self.menu = None
 
       self.edit_mode = False
-      import pdb; pdb.set_trace()
       self._original_block = Block(*tuple(block)) # copy, not reference
       print self.block, self._original_block
 
@@ -93,6 +92,33 @@ class LegoBrick():
          self.shape_studs = set([Vec3(*x) for x in shape_studs])
       self.draw()
    # end def __init__
+
+   def clone(self, position = None):
+      if position is None:
+         position = self.origin
+      # end if
+      if self.has_custom_shape:
+         shape = self.shape
+         shape_studs = self.shape_studs
+      else:
+         shape, shape_studs = None, None
+      return LegoBrick(
+                position,
+                length=self.length,
+                width=self.width,
+                # rounded_corners=self.rounded_corners,
+                has_studs = self.has_studs,
+                height=self.height,
+                shape= shape,
+                shape_studs = shape_studs,
+                block=self.block,
+                grid=self.grid,
+                up_vec = self.up_vec,
+                length_vec = self.length_vec,
+                mc=self.mc,
+                click_handler = self.click_handler,
+                on_destroy = self.on_destroy,
+               )
 
    def setMenu(self, new_menu):
       if self.menu: # have a menu already
@@ -201,13 +227,14 @@ class LegoBrick():
             ('move' ,   {'name': 'Move Brick',      'callback': self.ask_position            }),
             ('rotate' , {'name': 'Rotate Brick',    'callback': self.ask_direction           }),
             ('block',   {'name': 'Change Material', 'callback': self.ask_block               }),
+            ('shape',   {'name': 'Edit Shape',      'callback': self.pop_edit_menu           }),
+            ('studs',   {'name': 'Toggle Studs',    'callback': self.toggle_studs            }),
             ('length',  {'name': 'Change Length',   'callback': self.ask_dim('length')       }),
             ('width',   {'name': 'Change Width',    'callback': self.ask_dim('width')        }),
             ('height',  {'name': 'Change Height',   'callback': self.ask_dim('height',[1,3]) }),
-            ('studs',   {'name': 'Toggle Studs',    'callback': self.toggle_studs            }),
-            ('shape',   {'name': 'Edit Shape',      'callback': self.pop_edit_menu           }),
             ('delete' , {'name': 'Delete Brick',    'callback': self.ask_destroy             }),
             ('cancel' , {'name': 'Cancel',          'callback': self.cancel_menu             }),
+            ('clone',   {'name': 'Clone Brick',     'callback': self.place_clone             }),
             # copy
             # paste (if copied)
          ])
@@ -238,12 +265,16 @@ class LegoBrick():
       self.setMenu(None)
       print "Brick destroyed"
 
-   def ask_position(self, *args):
+   def ask_position(self, *args, **kwargs):
       self.setMenu(None)
+
+      set_rotation = kwargs.get('set_rotation')
 
       @PositionHandlerDecorator
       def get_pos(vec):
          self.origin = vec.clone()
+         if set_rotation:
+            self.length_vec = angleToBrickDirection(self.mc.player.getRotation())
          self.draw()
 
       self.mc.postToChat("Choose a new stud")
@@ -251,6 +282,13 @@ class LegoBrick():
 
       self.hide()
    # end def
+
+   def place(self):
+      self.ask_position(set_rotation = True)
+
+   def place_clone(self, *args):
+      c = self.clone().place() # add c to parent LegoGame block array # TODO
+      self.draw()
 
    def ask_block(self, *args):
       self.setMenu(None)
@@ -313,7 +351,6 @@ class LegoBrick():
       build the shape from length/width/height, etc. (reset to standard block)
       '''
       if self.deleted: return
-      self.old_shape = set([x for x in self.shape]) # quick copy
       self.shape = set()
       self.shape_studs = set()
       self.has_custom_shape = False # we just destroyed it
