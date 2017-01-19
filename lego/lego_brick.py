@@ -5,6 +5,7 @@ from menu import Menu
 from lego_grid import LegoGrid
 from collections import OrderedDict
 
+EDIT_BLOCK_TYPE = GLOWSTONE_BLOCK
 
 def angleToBrickDirection(angle):
    # print angle
@@ -73,10 +74,15 @@ class LegoBrick():
       if block is None:
          self.ask_block() # what material to use?
       else:
-         self.block = block
+         self.block = Block(*tuple(block))
       # end if
 
       self.menu = None
+
+      self.edit_mode = False
+      import pdb; pdb.set_trace()
+      self._original_block = Block(*tuple(block)) # copy, not reference
+      print self.block, self._original_block
 
       if shape is None and shape_studs is None:
          self.rebuild_shape()
@@ -101,36 +107,131 @@ class LegoBrick():
    def cancel_menu(self, *args):
       self.setMenu(None)
 
+   def pop_edit_menu(self, key, hitBlock):
+      '''
+      add blocks
+      remove blocks
+      save
+      cancel
+
+      reset shape
+      '''
+      self.setMenu(None) # same as all other sub menus, destroy main object menu
+
+      def change_shape(hitBlock):
+         vec = hitBlock.pos
+         if self.edit_mode == 'add':
+            # every block hit becomes part of the shape
+            # whole block brick becomes glowstone
+            self.add_block_to_shape(vec)
+         elif self.edit_mode == 'remove':
+            # when a block is selected with the remove tool/mode, make into air and remove from shape
+            self.remove_block_from_shape(vec)
+         # end if
+         self.draw()
+
+      @PositionHandlerDecorator
+      def place_menu(vec):
+         # store original shape in case we cancel
+         self._original_shape = set([x for x in self.shape])
+         self._original_shape_studs = set([x for x in self.shape_studs])
+         # while in edit mode, the main menu is disabled, must deal with this menu until it is cancelled
+
+         for b in [x for x in self.active_blocks]:
+            self._Remove_Active_Block(b)
+
+         # every block hit turns to glowstone (redraw after each block hit)
+         self._original_block = Block(*tuple(self.block))
+         self.block = Block(*tuple(EDIT_BLOCK_TYPE))
+         print self.block, self._original_block
+
+         def close_edit_menu(key, hitBlock):
+            print "close edit menu"
+            self.click_handler.Reset_Default_Handler()
+            self.block = Block(*tuple(self._original_block))
+            print self.block, self._original_block
+            if key == 'save':
+               pass # keep shape as-is
+            elif key == 'cancel':
+               self.shape = set([x for x in self._original_shape])
+               self.shape_studs = set([x for x in self._original_shape_studs])
+
+            self.edit_mode = False
+            self.draw()
+            self.setMenu(None)
+
+         def set_hit_mode(key, hitBlock):
+            if key == 'add':
+               print "Every block hit will be ADDED to the shape."
+               self.edit_mode = 'add'
+            elif key == 'remove':
+               print "Every block hit will be REMOVED from the shape."
+               self.edit_mode = 'remove'
+
+         # self.edit_mode = True (glowstone, store original block type)
+         # set hit mode to add blocks
+         set_hit_mode('add',None)
+         self.click_handler.Register_Default_Handler(change_shape)
+
+         self.draw() # redisplay the brick
+
+         choices = OrderedDict([
+            ('add' ,   {'name': 'Add Bricks\nto Shape',      'callback': set_hit_mode    }),
+            ('remove', {'name': 'Remove Bricks\nfrom Shape', 'callback': set_hit_mode    }),
+            ('save',   {'name': 'Save',                      'callback': close_edit_menu }),
+            ('cancel', {'name': 'Cancel',                    'callback': close_edit_menu }),
+         ])
+         self.setMenu( Menu(choices = choices,
+               title = 'Brick Menu - Choose what to change',
+               pos = vec, # TODO: given player pos, direction, and hit pos... given hit face... sign...
+               mc = self.mc,
+               persistent = True,
+               click_handler = self.click_handler,
+            ))
+      # TODO:
+      # print "register next click handler to place the menu at that time..."
+      # print "menu can be anywhere, should *not* be in the block area..."
+      # print "if blocks selected with the add block are part of something else, like this menu... or another brick..."
+      self.mc.postToChat("Choose where to place your Shape Edit menu.")
+      self.click_handler.Register_Next_Click_Handler(place_menu)
+
+   def pop_menu(self, hitBlock):
+      if self.edit_mode == False:
+         choices = OrderedDict([
+            ('move' ,   {'name': 'Move Brick',      'callback': self.ask_position            }),
+            ('rotate' , {'name': 'Rotate Brick',    'callback': self.ask_direction           }),
+            ('block',   {'name': 'Change Material', 'callback': self.ask_block               }),
+            ('length',  {'name': 'Change Length',   'callback': self.ask_dim('length')       }),
+            ('width',   {'name': 'Change Width',    'callback': self.ask_dim('width')        }),
+            ('height',  {'name': 'Change Height',   'callback': self.ask_dim('height',[1,3]) }),
+            ('studs',   {'name': 'Toggle Studs',    'callback': self.toggle_studs            }),
+            ('shape',   {'name': 'Edit Shape',      'callback': self.pop_edit_menu           }),
+            ('delete' , {'name': 'Delete Brick',    'callback': self.ask_destroy             }),
+            ('cancel' , {'name': 'Cancel',          'callback': self.cancel_menu             }),
+            # copy
+            # paste (if copied)
+         ])
+         if self.has_custom_shape:
+            # TODO: perhaps a shape edit menu (edit shape) is warranted?
+            for key in ['length','width','height','studs']:
+               choices[key]['name'] += '\nDISABLED\nCustom Shape'
+               choices[key]['callback'] = self.cancel_menu
+         # end if
+         self.setMenu( Menu(choices = choices,
+               title = 'Brick Menu - Choose what to change',
+               pos = hitBlock.pos,
+               mc = self.mc,
+               click_handler = self.click_handler,
+            ))
+      else:
+         print "Unable to pop main object menu while Edit Shape menu is in use."
+      # end if
+   # end def
+
    def toggle_studs(self, *args):
       self.has_studs = not self.has_studs
       self.rebuild_shape()
       self.draw()
-
-   def pop_menu(self, hitBlock):
-      choices = OrderedDict([
-         ('move' ,   {'name': 'Move Brick',      'callback': self.ask_position            }),
-         ('rotate' , {'name': 'Rotate Brick',    'callback': self.ask_direction           }),
-         ('block',   {'name': 'Change Material', 'callback': self.ask_block               }),
-         ('length',  {'name': 'Change Length',   'callback': self.ask_dim('length')       }),
-         ('width',   {'name': 'Change Width',    'callback': self.ask_dim('width')        }),
-         ('height',  {'name': 'Change Height',   'callback': self.ask_dim('height',[1,3]) }),
-         ('studs',   {'name': 'Toggle Studs',    'callback': self.toggle_studs            }),
-         ('delete' , {'name': 'Delete Brick',    'callback': self.ask_destroy             }),
-         ('cancel' , {'name': 'Cancel',          'callback': self.cancel_menu             }),
-      ])
-      if self.has_custom_shape:
-         # TODO: perhaps a shape edit menu (edit shape) is warranted?
-         for key in ['length','width','height','studs']:
-            choices[key]['name'] += '\nDISABLED\nCustom Shape'
-            choices[key]['callback'] = self.cancel_menu
-      # end if
-      self.setMenu( Menu(choices = choices,
-            title = 'Brick Menu - Choose what to change',
-            pos = hitBlock.pos,
-            mc = self.mc,
-            click_handler = self.click_handler,
-         ))
-   # end def
 
    def ask_destroy(self, *args):
       self.destroy()
@@ -294,6 +395,29 @@ class LegoBrick():
             # end for // h
          # end for // w
       # end for // l
+   # end def // rebuild_shape
+
+   def _global_to_shape(self, vec):
+      v = vec - self.origin
+      # now rotate it...
+      width_vec =  self.length_vec.cross(self.up_vec)
+
+      a,b,c = self.length_vec
+      d,e,f,= self.up_vec
+      g,h,i = width_vec
+      shape_vec = (Vec3(*[i,h,g]) * v.x) + \
+                  (Vec3(*[f,e,d]) * v.y) + \
+                  (Vec3(*[c,b,a]) * v.z)
+      return shape_vec
+
+   def add_block_to_shape(self, vec): # globally scoped vector
+      self.has_custom_shape = True
+      self.shape.add(self._global_to_shape(vec))
+
+   def remove_block_from_shape(self, vec): # globally scoped vector
+      self.has_custom_shape = True
+      self.shape.discard(self._global_to_shape(vec))
+      self.shape_studs.discard(self._global_to_shape(vec))
 
    def draw(self):
       '''
@@ -314,7 +438,8 @@ class LegoBrick():
                           (up_vec * dh) + \
                           (width_vec * dw)
          self.my_blocks.add(pixel_pos)
-         self._Register_Active_Block(pixel_pos)
+         if not self.edit_mode:
+            self._Register_Active_Block(pixel_pos)
       # end for each pixel in our shape
 
       # for the studs (which are not 'active' and instead are used to place blocks, owned by our parent)

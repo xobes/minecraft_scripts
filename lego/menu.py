@@ -27,8 +27,9 @@ import threading
 class Menu(threading.Thread):
    def __init__(self,
                 choices,
-                pos,
                 click_handler,
+                pos = None,
+                persistent = False,
                 title = None,
                 mc=None):
       '''
@@ -40,35 +41,35 @@ class Menu(threading.Thread):
       self.daemon = True
 
       self.mc = mc
-      # if position is None:
-      #    position = self.mc.player.getTilePos() + Vec3(0, 0, -1)
-      #    # player_dir = mc.player.getDirection()  # not used yet... do vector stuff (vector)
-      #    # mc.player.getRotation() # degrees of rotation
-      # # end if
-      #
-      # self.position = position
+
+      if pos is None:
+         pos = self.mc.player.getTilePos() + mc.player.getDirection()
+      # end if
+
       self.pos = pos
       self.click_handler = click_handler
       self.choices = choices
       self.signs = {}
       self.title = title
       self.displayed = False
+      self.persistent_menu = persistent
 
    def run(self):
-      while self.displayed:
-         # for s in self.signs:
-         #    if not self.displayed: break
-         #    sign = self.signs[s]
-         #    with sign.lock:
-         #       sign.face_player()
-         #       sign.update()
-         time.sleep(0.1)
+      while self.displayed: # now that locking is a thing in mc.conn, we can do this again...
+         for s in self.signs:
+            if not self.displayed: break
+            sign = self.signs[s]
+            with sign.lock:
+               sign.face_player()
+               sign.update()
+         time.sleep(0.2)
 
    def Register_Sign(self, key, s, cb):
       self.signs.update({key: s})
       def acknowledge_response(hitBlock):
          s.spin_once() # by definition, hitBlock is this sign...
-         self.cleanup()
+         if not self.persistent_menu:
+            self.cleanup()
          return cb(key, hitBlock)
       # end while
       self.click_handler.Register(s.position, acknowledge_response)
